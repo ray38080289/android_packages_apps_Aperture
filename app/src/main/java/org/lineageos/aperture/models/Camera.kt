@@ -94,8 +94,12 @@ class Camera private constructor(
         VideoDynamicRange.fromDynamicRange(it)
     }
 
+    // Only keep qualities we have a preference, icon and label for, in case
+    // CameraX starts reporting new ones
     private val videoQualityForDynamicRanges = supportedVideoDynamicRanges.associateWith {
-        videoCapabilities.getSupportedQualities(it.dynamicRange)
+        videoCapabilities.getSupportedQualities(it.dynamicRange).filter { quality ->
+            quality in listOf(Quality.SD, Quality.HD, Quality.FHD, Quality.QHD, Quality.UHD)
+        }
     }
 
     val supportedVideoQualities =
