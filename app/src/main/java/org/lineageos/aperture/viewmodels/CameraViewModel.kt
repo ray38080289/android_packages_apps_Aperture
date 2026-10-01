@@ -23,10 +23,13 @@ import androidx.camera.core.ImageCapture
 import androidx.camera.core.ImageCaptureException
 import androidx.camera.extensions.ExtensionMode
 import androidx.camera.video.Quality
+import androidx.camera.video.Recorder
 import androidx.camera.video.Recording
+import androidx.camera.video.VideoCapture
 import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.LifecycleCameraController
 import androidx.camera.view.video.AudioConfig
+import androidx.core.util.Consumer
 import androidx.core.animation.addListener
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationRequestCompat
@@ -798,6 +801,12 @@ class CameraViewModel(application: Application) : ApertureViewModel(application)
      */
     val videoRecording = MutableStateFlow<Recording?>(null)
 
+    /**
+     * Slow motion [VideoCapture], bound outside of [cameraController] since it cannot run
+     * high speed sessions. Null when not in slow motion.
+     */
+    var highSpeedVideoCapture: VideoCapture<Recorder>? = null
+
     val isVideoMicButtonEnabled = combine(
         cameraState,
         videoRecording,
@@ -1157,7 +1166,7 @@ class CameraViewModel(application: Application) : ApertureViewModel(application)
 
     fun captureVideo() {
         if (cameraState.value != CameraState.IDLE) {
-            if (cameraController.isRecording) {
+            if (cameraController.isRecording || highSpeedVideoCapture != null) {
                 // Stop the current recording session.
                 videoRecording.value?.stop()
             }
@@ -1183,12 +1192,7 @@ class CameraViewModel(application: Application) : ApertureViewModel(application)
         viewModelScope.launch {
             delay(delayTime)
 
-            // Start recording
-            videoRecording.value = cameraController.startRecording(
-                outputOptions,
-                videoAudioConfig,
-                cameraExecutor,
-            ) {
+            val listener = Consumer<VideoRecordEvent> {
                 viewModelScope.launch {
                     videoRecordEvent.emit(it)
                 }
@@ -1211,6 +1215,9 @@ class CameraViewModel(application: Application) : ApertureViewModel(application)
                     }
 
                     is VideoRecordEvent.Finalize -> {
+                        if (it.hasError()) {
+                            Log.e(LOG_TAG, "Video capture failed: ${it.error}", it.cause)
+                        }
                         cameraSoundsUtils.playStopVideoRecording()
                         if (it.error != VideoRecordEvent.Finalize.ERROR_NO_VALID_DATA) {
                             Log.d(
@@ -1227,6 +1234,17 @@ class CameraViewModel(application: Application) : ApertureViewModel(application)
                     }
                 }
             }
+
+            // Start recording; slow motion has no audio
+            videoRecording.value = highSpeedVideoCapture?.output
+                ?.prepareRecording(applicationContext, outputOptions)
+                ?.start(cameraExecutor, listener)
+                ?: cameraController.startRecording(
+                    outputOptions,
+                    videoAudioConfig,
+                    cameraExecutor,
+                    listener,
+                )
         }
     }
 

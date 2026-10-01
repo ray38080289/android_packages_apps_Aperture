@@ -16,6 +16,7 @@ import androidx.camera.core.CameraSelector
 import androidx.camera.core.CameraState
 import androidx.camera.core.ExperimentalLensFacing
 import androidx.camera.core.ExperimentalZeroShutterLag
+import androidx.camera.core.DynamicRange
 import androidx.camera.core.ImageCapture
 import androidx.camera.extensions.ExtensionsManager
 import androidx.camera.video.Quality
@@ -90,6 +91,15 @@ class Camera private constructor(
 
     private val videoCapabilities = Recorder.getVideoCapabilities(cameraInfo)
 
+    /**
+     * Video qualities that can be recorded in a high speed (slow motion) session.
+     */
+    val highSpeedVideoQualities: Set<Quality> =
+        Recorder.getHighSpeedVideoCapabilities(cameraInfo)
+            ?.getSupportedQualities(DynamicRange.SDR)
+            ?.toSet()
+            .orEmpty()
+
     private val supportedVideoDynamicRanges = videoCapabilities.supportedDynamicRanges.map {
         VideoDynamicRange.fromDynamicRange(it)
     }
@@ -113,6 +123,10 @@ class Camera private constructor(
                         } else {
                             add(frameRate)
                         }
+                    }
+                    // 120 fps is only available as slow motion, see highSpeedVideoQualities
+                    if (it in highSpeedVideoQualities) {
+                        add(FrameRate.FPS_120)
                     }
                 }.toSet(),
                 videoQualityForDynamicRanges.entries.filter { dynamicRangeToQualities ->

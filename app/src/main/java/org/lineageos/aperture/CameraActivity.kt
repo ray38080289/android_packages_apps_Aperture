@@ -24,6 +24,7 @@ import android.os.Looper
 import android.os.Message
 import android.provider.MediaStore
 import android.util.Log
+import android.util.Range
 import android.view.GestureDetector
 import android.view.KeyEvent
 import android.view.MotionEvent
@@ -43,11 +44,16 @@ import androidx.camera.core.AspectRatio
 import androidx.camera.core.ExperimentalZeroShutterLag
 import androidx.camera.core.ImageCapture
 import androidx.camera.core.MirrorMode
+import androidx.camera.core.Preview
 import androidx.camera.core.resolutionselector.AspectRatioStrategy
 import androidx.camera.core.resolutionselector.ResolutionSelector
 import androidx.camera.extensions.ExtensionMode
+import androidx.camera.lifecycle.ProcessCameraProvider
+import androidx.camera.video.HighSpeedVideoSessionConfig
 import androidx.camera.video.Quality
 import androidx.camera.video.QualitySelector
+import androidx.camera.video.Recorder
+import androidx.camera.video.VideoCapture
 import androidx.camera.video.VideoRecordEvent
 import androidx.camera.view.CameraController
 import androidx.camera.view.PreviewView
@@ -107,6 +113,7 @@ import org.lineageos.aperture.models.CameraMode
 import org.lineageos.aperture.models.CameraState
 import org.lineageos.aperture.models.Event
 import org.lineageos.aperture.models.FlashMode
+import org.lineageos.aperture.models.FrameRate
 import org.lineageos.aperture.models.GestureAction
 import org.lineageos.aperture.models.GridMode
 import org.lineageos.aperture.models.HardwareKey
@@ -1468,6 +1475,11 @@ open class CameraActivity : AppCompatActivity(R.layout.activity_camera) {
 
         // Unbind previous use cases
         viewModel.cameraController.unbind()
+        if (viewModel.highSpeedVideoCapture != null) {
+            ProcessCameraProvider.getInstance(this).get().unbindAll()
+            viewModel.highSpeedVideoCapture = null
+            viewFinder.controller = viewModel.cameraController
+        }
 
         // Hide grid until preview is ready
         gridView.alpha = 0f
@@ -1561,6 +1573,16 @@ open class CameraActivity : AppCompatActivity(R.layout.activity_camera) {
                     )
                 ) {
                     "Video dynamic range not supported with the requested video quality"
+                }
+
+                if (
+                    cameraConfiguration.videoFrameRate == FrameRate.FPS_120 &&
+                    cameraConfiguration.camera.highSpeedVideoQualities.contains(
+                        cameraConfiguration.videoQuality
+                    )
+                ) {
+                    bindSlowMotion(cameraConfiguration)
+                    return
                 }
 
                 // Set the quality
@@ -1662,6 +1684,35 @@ open class CameraActivity : AppCompatActivity(R.layout.activity_camera) {
 
         // Reset exposure level
         viewModel.setExposureCompensationLevel(0.5f)
+    }
+
+    /**
+     * 120 fps slow motion. CameraController cannot run high speed sessions, so the use cases
+     * are bound directly; zoom, focus and flash controls do not apply here.
+     */
+    private fun bindSlowMotion(cameraConfiguration: CameraConfiguration.Video) {
+        val videoCapture = VideoCapture.withOutput(
+            Recorder.Builder()
+                .setQualitySelector(QualitySelector.from(cameraConfiguration.videoQuality))
+                .build()
+        )
+
+        viewFinder.controller = null
+        val preview = Preview.Builder().build().also {
+            it.setSurfaceProvider(viewFinder.surfaceProvider)
+        }
+
+        ProcessCameraProvider.getInstance(this).get().bindToLifecycle(
+            this,
+            cameraConfiguration.camera.cameraSelector,
+            HighSpeedVideoSessionConfig(
+                videoCapture,
+                preview,
+                Range(FrameRate.FPS_120.value, FrameRate.FPS_120.value),
+                true,
+            ),
+        )
+        viewModel.highSpeedVideoCapture = videoCapture
     }
 
     private fun updateGalleryButton(uri: Uri?, fromCapture: Boolean) {
